@@ -126,6 +126,9 @@ api.interceptors.response.use(
 
 export function errText(error: any): string {
   const detail = error?.response?.data?.detail
+  if (detail === 'account_not_synced') {
+    return "This account isn't on this server instance yet — sign in from the browser where you created it, or create a new account."
+  }
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) return detail.map((d: any) => d?.msg || JSON.stringify(d)).join('; ')
   return error?.message || 'Something went wrong'

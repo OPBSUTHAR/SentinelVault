@@ -252,7 +252,9 @@ def register(body: RegisterBody, request: Request):
 def login(body: LoginBody, request: Request):
     user = _get_user_by_email(body.email)
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        # This serverless instance has never seen the account. The client can
+        # push its encrypted backup and retry (see /sync/restore).
+        raise HTTPException(status_code=409, detail="account_not_synced")
     master_key = derive_master_key(body.password, user["kdf_salt"])
     if not verify_master_key(master_key, user["verifier"]):
         anomaly.record_login(user["id"], False, client_ip(request), client_agent(request))
@@ -310,7 +312,9 @@ def change_password(body: ChangePasswordBody, auth: dict = Depends(get_unlocked)
 @router.post("/auth/recovery")
 def recover(body: RecoveryBody, request: Request):
     user = _get_user_by_email(body.email)
-    if not user or not user["recovery_wrapped_key"]:
+    if not user:
+        raise HTTPException(status_code=409, detail="account_not_synced")
+    if not user["recovery_wrapped_key"]:
         raise HTTPException(status_code=404, detail="No recovery data for that account")
     try:
         old_mk = unwrap_master_key(body.recovery_key.strip(), user["recovery_wrapped_key"])
