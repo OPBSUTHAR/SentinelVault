@@ -1,0 +1,11 @@
+# Vercel CLI upload exclusions
+frontend/node_modules
+backend/.venv
+**/__pycache__
+**/*.pyc
+*.log
+backend/.env
+backend/data
+.vscode
+.vercel
+extension/node_modules

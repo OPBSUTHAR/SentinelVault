@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "SentinelVault Auto-fill",
+  "version": "1.0.0",
+  "description": "Auto-fill logins from your SentinelVault vault. Zero-knowledge: the extension talks straight to your own SentinelVault API.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["http://localhost:8000/*", "http://127.0.0.1:8000/*", "https://*.vercel.app/*"],
+  "action": {
+    "default_title": "SentinelVault Auto-fill",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {}
+}

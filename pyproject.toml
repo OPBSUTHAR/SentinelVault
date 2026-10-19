@@ -1,0 +1,20 @@
+[tool.vercel]
+entrypoint = "index:app"
+
+[project]
+name = "sentinelvault"
+version = "1.0.0"
+description = "AI-powered password manager - zero-knowledge vault, breach monitoring, health scoring"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.34.0",
+    "pydantic==2.9.2",
+    "python-dotenv==1.0.1",
+    "python-jose[cryptography]==3.3.0",
+    "argon2-cffi==23.1.0",
+    "cryptography==43.0.1",
+    "httpx==0.27.2",
+    "qrcode==7.4.2",
+    "pillow==10.4.0",
+]
