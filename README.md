@@ -140,6 +140,16 @@ account) to explore.
 
 ---
 
+## 🌐 Live Demo
+
+**https://sentinelvault-pearl.vercel.app** — deployed on Vercel as a single FastAPI serverless function that also serves the React build.
+
+- Register a fresh account on the live site — Argon2id key derivation and AES-256-GCM encryption run fully end-to-end in the cloud.
+- The demo database lives on ephemeral `/tmp` storage, so accounts reset on cold start — perfect for evaluating, not for storing real secrets.
+- Sessions are in-memory by design: after a cold start the vault starts locked; unlock with your master password or the recovery key.
+- Breach checks call the live HIBP k-anonymity API from the deployment (`password123` → 2,266,543 hits).
+- The auto-fill extension is local-only: load it unpacked from `extension/` and point it at the live URL.
+
 ## ⚠️ Notes & limitations
 
 - Sessions are in-memory by design (a restart locks vaults); for multi-instance deployments move the
