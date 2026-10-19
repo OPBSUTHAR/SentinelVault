@@ -25,6 +25,7 @@ export default function LoginPage() {
   const finish = (data: any, key?: string) => {
     setAuth(data.token, data.user || null, true)
     if (data.master_key) setMasterKey(data.master_key)
+    SyncApi.seedFromAuth(data)
     SyncApi.refreshBackup()
     if (key) {
       setIssuedKey(key)

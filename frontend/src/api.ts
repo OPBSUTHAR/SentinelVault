@@ -150,6 +150,25 @@ export const SyncApi = {
   backup: () => api.get('/sync/backup').then((r) => r.data),
   restore: (bundle: any) => api.post('/sync/restore', bundle).then((r) => r.data),
   readBackup,
+  /** Store a minimal encrypted-backup seed right after register/login/unlock so
+   *  even a brand-new account can re-seed any serverless instance later. */
+  seedFromAuth(data: any): void {
+    try {
+      if (!data?.user_seed || readBackup()) return
+      writeBackup({
+        version: 1,
+        saved_at: new Date().toISOString(),
+        email: data.user_seed.email,
+        user: data.user_seed,
+        vault_items: [],
+        shares: [],
+        emergency_contacts: [],
+        emergency_requests: [],
+      })
+    } catch {
+      /* best effort */
+    }
+  },
   /** Pre-flight helper: if we hold a backup for this email, push it to the
    *  instance serving this request so login/recovery always finds the account. */
   async ensureAccount(email: string): Promise<boolean> {

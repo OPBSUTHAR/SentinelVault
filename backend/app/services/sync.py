@@ -48,6 +48,12 @@ def _encode_row(row) -> dict:
     return {key: _to_json(value) for key, value in dict(row).items()}
 
 
+def user_seed(user) -> dict:
+    """Minimal encoded user row the client keeps so a brand-new account can
+    re-seed any serverless instance before the first full backup exists."""
+    return _encode_row(user if isinstance(user, dict) else dict(user))
+
+
 def _decode_row(row: dict, blob_keys: set[str]) -> dict:
     out = {}
     for key, value in row.items():

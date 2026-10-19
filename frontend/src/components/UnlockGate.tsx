@@ -26,6 +26,7 @@ export default function UnlockGate({ children }: { children: ReactNode }) {
         setUnlocked(true)
       }
       if (data.master_key) setMasterKey(data.master_key)
+      SyncApi.seedFromAuth(data)
       SyncApi.refreshBackup()
       toast('Vault unlocked', 'success')
     } catch (error: any) {

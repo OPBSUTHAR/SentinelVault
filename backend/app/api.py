@@ -35,7 +35,7 @@ from .security import (
     get_optional_current,
     get_unlocked,
 )
-from .services import anomaly, breach, emergency, generator, health, phishing, sharing, strength
+from .services import anomaly, breach, emergency, generator, health, phishing, sharing, strength, sync as sync_service
 from .services import sync as sync_service
 from .services import vault as vault_service
 
@@ -240,6 +240,7 @@ def register(body: RegisterBody, request: Request):
     return {
         "token": token,
         "master_key": b64_master_key(master_key),
+        "user_seed": sync_service.user_seed(user),
         "user": _public_user(user),
         "recovery_key": recovery_key,
         "recovery_note": "Save this recovery key somewhere safe and offline. It is shown only once and it is the "
@@ -258,7 +259,7 @@ def login(body: LoginBody, request: Request):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_token(user["id"])
     anomaly.record_login(user["id"], True, client_ip(request), client_agent(request))
-    return {"token": token, "master_key": b64_master_key(master_key), "user": _public_user(user)}
+    return {"token": token, "master_key": b64_master_key(master_key), "user_seed": sync_service.user_seed(user), "user": _public_user(user)}
 
 
 @router.post("/auth/unlock")
@@ -270,7 +271,7 @@ def unlock(body: UnlockBody, request: Request, auth: dict = Depends(get_current)
     if not verify_master_key(master_key, user["verifier"]):
         anomaly.record_login(user["id"], False, client_ip(request), client_agent(request))
         raise HTTPException(status_code=401, detail="Incorrect master password")
-    return {"ok": True, "unlocked": True, "master_key": b64_master_key(master_key)}
+    return {"ok": True, "unlocked": True, "master_key": b64_master_key(master_key), "user_seed": sync_service.user_seed(user)}
 
 
 @router.post("/auth/lock")
@@ -295,10 +296,12 @@ def change_password(body: ChangePasswordBody, auth: dict = Depends(get_unlocked)
         " updated_at = ? WHERE id = ?",
         (new_salt, compute_verifier(new_mk), wrap_master_key(new_recovery, new_mk), utcnow(), utcnow(), user["id"]),
     )
+    user = _get_user(auth["user_id"])
     return {
         "ok": True,
         "reencrypted_items": reencrypted,
         "master_key": b64_master_key(new_mk),
+        "user_seed": sync_service.user_seed(user),
         "recovery_key": new_recovery,
         "recovery_note": "Your recovery key was rotated — save the new one, the old one no longer works.",
     }
@@ -330,10 +333,12 @@ def recover(body: RecoveryBody, request: Request):
     )
     token = create_token(user["id"])
     anomaly.record_login(user["id"], True, client_ip(request), client_agent(request))
+    user = _get_user_by_email(body.email)
     return {
         "ok": True,
         "token": token,
         "master_key": b64_master_key(new_mk),
+        "user_seed": sync_service.user_seed(user),
         "reencrypted_items": reencrypted,
         "recovery_key": new_recovery,
     }
