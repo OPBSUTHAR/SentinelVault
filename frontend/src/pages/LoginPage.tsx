@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ShieldCheck, KeyRound, AlertTriangle } from 'lucide-react'
-import { AuthApi, errText } from '../api'
+import { AuthApi, errText, setMasterKey, SyncApi } from '../api'
 import { useAuth } from '../store'
 import { Card, CopyButton, useToast } from '../components/ui'
 
@@ -23,7 +23,9 @@ export default function LoginPage() {
   const toast = useToast()
 
   const finish = (data: any, key?: string) => {
-    setAuth(data.token, data.user, true)
+    setAuth(data.token, data.user || null, true)
+    if (data.master_key) setMasterKey(data.master_key)
+    SyncApi.refreshBackup()
     if (key) {
       setIssuedKey(key)
     } else {
@@ -38,12 +40,16 @@ export default function LoginPage() {
     setBusy(true)
     try {
       if (mode === 'login') {
+        // If this serverless instance hasn't seen the account yet, seed it
+        // from the browser's encrypted backup before signing in.
+        await SyncApi.ensureAccount(email)
         const data = await AuthApi.login({ email, password })
         finish(data)
       } else if (mode === 'register') {
         const data = await AuthApi.register({ email, display_name: name, password })
         finish(data, data.recovery_key)
       } else {
+        await SyncApi.ensureAccount(email)
         const data = await AuthApi.recovery(email, recoveryKey.trim(), newPassword)
         finish(data, data.recovery_key)
       }

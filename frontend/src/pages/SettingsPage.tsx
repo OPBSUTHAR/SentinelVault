@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BookOpen, KeyRound, Lock, LogOut, RefreshCw } from 'lucide-react'
-import { AuthApi, ToolsApi, errText } from '../api'
+import { AuthApi, SyncApi, ToolsApi, errText, setMasterKey } from '../api'
 import { useAuth } from '../store'
 import { Badge, Card, CopyButton, Modal, StrengthMeter, useToast } from '../components/ui'
 
@@ -31,6 +31,8 @@ export default function SettingsPage() {
     setBusy(true)
     try {
       const res = await AuthApi.changePassword('', newPw)
+      if (res.master_key) setMasterKey(res.master_key)
+      SyncApi.refreshBackup().catch(() => {})
       setNewRecovery(res.recovery_key)
       setSavedKey(false)
       setNewPw('')
@@ -47,6 +49,7 @@ export default function SettingsPage() {
   const lockVault = async () => {
     try {
       await AuthApi.lock()
+      setMasterKey(null)
       setUnlocked(false)
       toast('Vault locked', 'success')
     } catch (e) {

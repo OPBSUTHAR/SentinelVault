@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id)
 
-let state = { apiBase: 'http://localhost:8000', token: '', user: null }
+let state = { apiBase: 'http://localhost:8000', token: '', user: null, masterKey: '' }
 
 async function api(path, options = {}) {
   const res = await fetch(`${state.apiBase}${path}`, {
@@ -10,6 +10,7 @@ async function api(path, options = {}) {
     headers: {
       'Content-Type': 'application/json',
       ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      ...(state.masterKey ? { 'X-SV-Key': state.masterKey } : {}),
       ...(options.headers || {}),
     },
   })
@@ -24,14 +25,17 @@ async function api(path, options = {}) {
 }
 
 async function save() {
-  await chrome.storage.local.set(state)
+  await chrome.storage.local.set({ apiBase: state.apiBase, token: state.token, user: state.user })
+  await chrome.storage.session.set({ masterKey: state.masterKey })
 }
 
 async function restore() {
   const stored = await chrome.storage.local.get(['apiBase', 'token', 'user'])
-  state = { ...state, ...stored }
+  const sess = await chrome.storage.session.get(['masterKey'])
+  state = { ...state, ...stored, masterKey: sess.masterKey || '' }
   $('api').value = state.apiBase || 'http://localhost:8000'
-  if (state.token) showVault()
+  if (state.token && state.masterKey) showVault()
+  else if (state.token) $('err').textContent = 'Browser session key expired — sign in again.'
 }
 
 function showVault() {
@@ -119,6 +123,7 @@ $('btnLogin').onclick = async () => {
     })
     state.token = data.token
     state.user = data.user
+    state.masterKey = data.master_key || ''
     $('password').value = ''
     await save()
     showVault()
@@ -135,6 +140,7 @@ $('btnLock').onclick = async () => {
   }
   state.token = ''
   state.user = null
+  state.masterKey = ''
   await save()
   $('vault').style.display = 'none'
   $('login').style.display = 'block'

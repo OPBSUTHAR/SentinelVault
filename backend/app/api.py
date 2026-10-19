@@ -27,16 +27,16 @@ from .crypto.engine import (
 )
 from .db import execute, new_id, query_one, utcnow
 from .security import (
+    b64_master_key,
     client_agent,
     client_ip,
-    create_session,
     create_token,
     get_current,
+    get_optional_current,
     get_unlocked,
-    lock_session,
-    unlock_session,
 )
 from .services import anomaly, breach, emergency, generator, health, phishing, sharing, strength
+from .services import sync as sync_service
 from .services import vault as vault_service
 
 router = APIRouter()
@@ -199,12 +199,6 @@ def _check_master_password(password: str) -> list[str]:
     return problems
 
 
-def _issue_session(user) -> dict:
-    session_id = create_session(user["id"], b"")  # placeholder key, replaced on unlock/login
-    token = create_token(user["id"], session_id)
-    return {"token": token, "session_id": session_id}
-
-
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -240,12 +234,12 @@ def register(body: RegisterBody, request: Request):
             now,
         ),
     )
-    session_id = create_session(user_id, master_key)
-    token = create_token(user_id, session_id)
+    token = create_token(user_id)
     anomaly.record_login(user_id, True, client_ip(request), client_agent(request))
     user = _get_user(user_id)
     return {
         "token": token,
+        "master_key": b64_master_key(master_key),
         "user": _public_user(user),
         "recovery_key": recovery_key,
         "recovery_note": "Save this recovery key somewhere safe and offline. It is shown only once and it is the "
@@ -262,10 +256,9 @@ def login(body: LoginBody, request: Request):
     if not verify_master_key(master_key, user["verifier"]):
         anomaly.record_login(user["id"], False, client_ip(request), client_agent(request))
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    session_id = create_session(user["id"], master_key)
-    token = create_token(user["id"], session_id)
+    token = create_token(user["id"])
     anomaly.record_login(user["id"], True, client_ip(request), client_agent(request))
-    return {"token": token, "user": _public_user(user)}
+    return {"token": token, "master_key": b64_master_key(master_key), "user": _public_user(user)}
 
 
 @router.post("/auth/unlock")
@@ -277,16 +270,12 @@ def unlock(body: UnlockBody, request: Request, auth: dict = Depends(get_current)
     if not verify_master_key(master_key, user["verifier"]):
         anomaly.record_login(user["id"], False, client_ip(request), client_agent(request))
         raise HTTPException(status_code=401, detail="Incorrect master password")
-    if not unlock_session(auth["session_id"], user["id"], master_key):
-        session_id = create_session(user["id"], master_key)
-        new_token = create_token(user["id"], session_id)
-        return {"ok": True, "unlocked": True, "token": new_token, "rotated": True}
-    return {"ok": True, "unlocked": True, "token": None, "rotated": False}
+    return {"ok": True, "unlocked": True, "master_key": b64_master_key(master_key)}
 
 
 @router.post("/auth/lock")
 def lock(auth: dict = Depends(get_current)):
-    lock_session(auth["session_id"])
+    # Stateless design: locking = the client drops its in-memory master key.
     return {"ok": True, "locked": True}
 
 
@@ -306,10 +295,10 @@ def change_password(body: ChangePasswordBody, auth: dict = Depends(get_unlocked)
         " updated_at = ? WHERE id = ?",
         (new_salt, compute_verifier(new_mk), wrap_master_key(new_recovery, new_mk), utcnow(), utcnow(), user["id"]),
     )
-    unlock_session(auth["session_id"], user["id"], new_mk)
     return {
         "ok": True,
         "reencrypted_items": reencrypted,
+        "master_key": b64_master_key(new_mk),
         "recovery_key": new_recovery,
         "recovery_note": "Your recovery key was rotated — save the new one, the old one no longer works.",
     }
@@ -339,10 +328,15 @@ def recover(body: RecoveryBody, request: Request):
         " updated_at = ? WHERE id = ?",
         (new_salt, compute_verifier(new_mk), wrap_master_key(new_recovery, new_mk), utcnow(), utcnow(), user["id"]),
     )
-    session_id = create_session(user["id"], new_mk)
-    token = create_token(user["id"], session_id)
+    token = create_token(user["id"])
     anomaly.record_login(user["id"], True, client_ip(request), client_agent(request))
-    return {"ok": True, "token": token, "reencrypted_items": reencrypted, "recovery_key": new_recovery}
+    return {
+        "ok": True,
+        "token": token,
+        "master_key": b64_master_key(new_mk),
+        "reencrypted_items": reencrypted,
+        "recovery_key": new_recovery,
+    }
 
 
 @router.get("/auth/me")
@@ -684,6 +678,26 @@ def decide_emergency_request(request_id: str, body: DecideBody, auth: dict = Dep
     result = emergency.decide_request(auth["user_id"], request_id, body.approve, master_key)
     if not result.get("ok"):
         raise HTTPException(status_code=result.get("status", 400), detail=result.get("error", "Decision failed"))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Encrypted backup sync (client-carried state so any serverless instance works)
+# ---------------------------------------------------------------------------
+
+@router.get("/sync/backup")
+def sync_backup(auth: dict = Depends(get_current)):
+    result = sync_service.export_bundle(auth["user_id"])
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail="No data for this account on this instance")
+    return result
+
+
+@router.post("/sync/restore")
+def sync_restore(bundle: dict, auth: dict | None = Depends(get_optional_current)):
+    result = sync_service.restore_bundle(bundle, auth["user_id"] if auth else None)
+    if not result.get("ok"):
+        raise HTTPException(status_code=result.get("status", 400), detail=result.get("error", "Restore failed"))
     return result
 
 

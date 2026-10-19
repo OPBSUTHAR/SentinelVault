@@ -4,7 +4,7 @@ import {
   LayoutDashboard, KeyRound, Wand2, ShieldAlert, Radar, Share2, Siren, Settings as SettingsIcon,
   Lock, Unlock, LogOut, Bell, ShieldCheck,
 } from 'lucide-react'
-import { AuthApi, SecurityApi } from '../api'
+import { AuthApi, SecurityApi, SyncApi, setMasterKey } from '../api'
 import { useAuth } from '../store'
 import { Spinner } from './ui'
 
@@ -30,13 +30,28 @@ export default function Layout() {
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    AuthApi.me()
-      .then((d) => {
+    const boot = async () => {
+      try {
+        // Serverless instances are interchangeable: seed the one answering
+        // this request with our encrypted backup before asking for state.
+        const backup = SyncApi.readBackup()
+        if (backup && localStorage.getItem('sv_token')) {
+          try {
+            await SyncApi.restore(backup.bundle)
+          } catch {
+            /* account already present on this instance — fine */
+          }
+        }
+        const d = await AuthApi.me()
         setUser(d.user)
         setUnlocked(!!d.unlocked)
-      })
-      .catch(() => {})
-      .finally(() => setChecking(false))
+      } catch {
+        /* invalid token handled by the api interceptor */
+      } finally {
+        setChecking(false)
+      }
+    }
+    boot()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -51,6 +66,7 @@ export default function Layout() {
     try {
       await AuthApi.lock()
     } catch {}
+    setMasterKey(null)
     setUnlocked(false)
   }
 

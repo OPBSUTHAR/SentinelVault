@@ -4,19 +4,118 @@ export const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 export const api = axios.create({ baseURL: API_BASE, timeout: 60000 })
 
+// ---- Master key (browser-only; sent per request as X-SV-Key) ---------------
+// The server is stateless: it never stores the vault key. The key lives in the
+// browser (sessionStorage = this tab; cleared when the tab closes) and travels
+// on each vault request over TLS.
+const MK_KEY = 'sv_mk'
+
+let masterKey: string | null = sessionStorage.getItem(MK_KEY)
+
+export function setMasterKey(key: string | null) {
+  masterKey = key
+  if (key) sessionStorage.setItem(MK_KEY, key)
+  else sessionStorage.removeItem(MK_KEY)
+}
+
+export function getMasterKey(): string | null {
+  return masterKey
+}
+
+// ---- Encrypted backup (client-carried state so any server instance works) --
+const BACKUP_KEY = 'sv_backup'
+
+export function readBackup(): { email?: string; bundle: any } | null {
+  try {
+    const raw = localStorage.getItem(BACKUP_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.bundle ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeBackup(bundle: any) {
+  try {
+    if (!bundle?.user?.email) return
+    localStorage.setItem(
+      BACKUP_KEY,
+      JSON.stringify({ email: bundle.user.email, saved_at: new Date().toISOString(), bundle }),
+    )
+  } catch {
+    /* localStorage quota — backup is best-effort by design */
+  }
+}
+
+let backupTimer: number | undefined
+
+function scheduleBackupRefresh() {
+  if (!localStorage.getItem('sv_token')) return
+  window.clearTimeout(backupTimer)
+  backupTimer = window.setTimeout(async () => {
+    try {
+      const r = await api.get('/sync/backup')
+      if (r.data?.ok) writeBackup(r.data.bundle)
+    } catch {
+      /* instance changed or offline — the next mutation retries */
+    }
+  }, 1200)
+}
+
+const MUTATION_PREFIXES = [
+  '/vault',
+  '/shares',
+  '/emergency',
+  '/auth/change-password',
+  '/auth/recovery',
+  '/auth/register',
+  '/auth/login',
+]
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('sv_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  if (masterKey) config.headers['X-SV-Key'] = masterKey
   return config
 })
 
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
+  (response) => {
+    const cfg = response.config
+    const method = (cfg.method || 'get').toLowerCase()
+    if (method !== 'get' && MUTATION_PREFIXES.some((p) => (cfg.url || '').startsWith(p))) {
+      scheduleBackupRefresh()
+    }
+    return response
+  },
+  async (error) => {
     const status = error?.response?.status
-    const url: string = error?.config?.url || ''
+    const detail = error?.response?.data?.detail
+    const cfg = error?.config || {}
+    const url: string = cfg.url || ''
+
+    // This serverless instance doesn't know the account yet — push the
+    // encrypted backup and retry the original request (max 2 attempts).
+    if (status === 409 && detail === 'account_not_synced') {
+      const attempts = (cfg._svRetries || 0) + 1
+      cfg._svRetries = attempts
+      if (attempts <= 2) {
+        const backup = readBackup()
+        if (backup) {
+          try {
+            await api.post('/sync/restore', backup.bundle)
+            return api.request(cfg)
+          } catch {
+            /* fall through to normal error handling */
+          }
+        }
+      }
+    }
+
     if (status === 401 && !url.includes('/auth/login') && !url.includes('/auth/register')) {
       localStorage.removeItem('sv_token')
+      setMasterKey(null)
       if (!window.location.pathname.startsWith('/login')) {
         window.location.href = '/login'
       }
@@ -45,6 +144,37 @@ export const AuthApi = {
     api.post('/auth/change-password', { current_password, new_password }).then((r) => r.data),
   recovery: (email: string, recovery_key: string, new_password: string) =>
     api.post('/auth/recovery', { email, recovery_key, new_password }).then((r) => r.data),
+}
+
+export const SyncApi = {
+  backup: () => api.get('/sync/backup').then((r) => r.data),
+  restore: (bundle: any) => api.post('/sync/restore', bundle).then((r) => r.data),
+  readBackup,
+  /** Pre-flight helper: if we hold a backup for this email, push it to the
+   *  instance serving this request so login/recovery always finds the account. */
+  async ensureAccount(email: string): Promise<boolean> {
+    const backup = readBackup()
+    if (!backup || (backup.email || '').toLowerCase() !== (email || '').toLowerCase()) return false
+    try {
+      await api.post('/sync/restore', backup.bundle)
+      return true
+    } catch {
+      return false
+    }
+  },
+  /** Pull a fresh full backup (call right after login/register). */
+  async refreshBackup(): Promise<any | null> {
+    try {
+      const r = await api.get('/sync/backup')
+      if (r.data?.ok) {
+        writeBackup(r.data.bundle)
+        return r.data.bundle
+      }
+    } catch {
+      /* ignore */
+    }
+    return null
+  },
 }
 
 export const VaultApi = {

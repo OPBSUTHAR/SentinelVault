@@ -49,7 +49,7 @@ Vault ──▶ Encryption Engine ──▶ (API) ──▶ Breach Monitor ─�
 2. **Auth verifier** = HMAC-SHA256(master key) stored server-side — login proves key knowledge without storing the password.
 3. **Per-purpose subkeys** via HKDF-SHA256 domain separation (`vault-items`, `recovery`, `emergency-bundle`, share tokens…).
 4. **Every vault item** is AES-256-GCM encrypted with the item id as AAD; the server only ever sees ciphertext.
-5. **Master key lives in server memory only** — sessions lock after inactivity, and a restart locks every vault.
+5. **The master key never touches the disk** — it lives for the browser session only and travels in an `X-SV-Key` header exactly while the vault is unlocked; the server decrypts per request and keeps nothing between requests.
 6. **Recovery** wraps the master key under a 256-bit recovery key (base32, shown once). Changing the master password re-encrypts all items and issues a new recovery key.
 7. **Share links** derive their encryption key from the random token via SHA-256 — ciphertext at rest, decryption happens per view.
 8. **Emergency bundles** are encrypted under a key derived from the contact's request token and only built while the owner's vault is unlocked.
@@ -98,8 +98,8 @@ own SentinelVault API — no third-party server involved.
 1. Sign in to the dashboard once (so your vault has items).
 2. `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick the `extension/` folder.
 3. Click the toolbar icon, confirm the API base URL (default `http://localhost:8000`), and sign in
-   with the same account. The master password is used once to obtain a session token; only the token
-   is stored in the browser.
+   with the same account. The master password is used once to obtain a token plus the in-tab master
+   key; only the token persists in the browser and the key is dropped when you lock.
 4. On any login page, open the popup and hit **Fill** — the username/email and password fields are
    auto-filled (or use **Copy pw** for apps without a web form).
 
@@ -134,9 +134,11 @@ emergency bundle release → lock/unlock → brute-force alerts → recovery res
 Deployed on Vercel as a single serverless FastAPI function (`index.py` entrypoint) with the React SPA
 built by `vercel.json`'s build command and served from the same origin (`/api` stays relative).
 
-Serverless notes: the SQLite database lives in `/tmp` and resets when the function cold-starts; master
-keys live in memory, so every cold start begins with a locked vault — unlock (or register a fresh demo
-account) to explore.
+Serverless notes: each function instance keeps its own disposable `/tmp` SQLite, so the browser holds
+a client-carried, end-to-end encrypted backup of your vault (ciphertext only) and transparently re-seeds
+any fresh instance it lands on via `/api/sync/backup` and `/api/sync/restore`. Authentication is fully
+stateless — a JWT plus a per-request master-key header — so requests can hit any instance (cold start,
+new deploy, different region) without logging you out.
 
 ---
 
@@ -145,15 +147,14 @@ account) to explore.
 **https://sentinelvault-pearl.vercel.app** — deployed on Vercel as a single FastAPI serverless function that also serves the React build.
 
 - Register a fresh account on the live site — Argon2id key derivation and AES-256-GCM encryption run fully end-to-end in the cloud.
-- The demo database lives on ephemeral `/tmp` storage, so accounts reset on cold start — perfect for evaluating, not for storing real secrets.
-- Sessions are in-memory by design: after a cold start the vault starts locked; unlock with your master password or the recovery key.
+- The demo database lives on ephemeral `/tmp` storage and each serverless instance is independent; the app keeps an encrypted backup of your vault in your browser and restores it to whichever instance serves the request, so your account works across cold starts and instances. (For irreplaceable secrets, still use a production vault.)
+- Auth is stateless: a JWT plus a per-request master-key header — no sessions to lose on deploys or cold starts. Lock the vault any time to drop the key.
 - Breach checks call the live HIBP k-anonymity API from the deployment (`password123` → 2,266,543 hits).
 - The auto-fill extension is local-only: load it unpacked from `extension/` and point it at the live URL.
 
 ## ⚠️ Notes & limitations
 
-- Sessions are in-memory by design (a restart locks vaults); for multi-instance deployments move the
-  session store behind a shared, encrypted service.
+- Auth is stateless by design (no server session store): the token is a signed JWT and the master key stays client-side, presented per request as `X-SV-Key` only while unlocked. A production hardening pass would add device pairing, WebAuthn and rate limiting.
 - Live account-breach lookups require a paid HIBP API key (the password range API is free).
 - HTTPS should terminate in front of the API in production.
 

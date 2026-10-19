@@ -1,6 +1,6 @@
 import { useState, ReactNode } from 'react'
 import { Lock } from 'lucide-react'
-import { AuthApi, errText } from '../api'
+import { AuthApi, errText, setMasterKey, SyncApi } from '../api'
 import { useAuth } from '../store'
 import { Card, useToast } from './ui'
 
@@ -25,6 +25,8 @@ export default function UnlockGate({ children }: { children: ReactNode }) {
       } else {
         setUnlocked(true)
       }
+      if (data.master_key) setMasterKey(data.master_key)
+      SyncApi.refreshBackup()
       toast('Vault unlocked', 'success')
     } catch (error: any) {
       setErr(errText(error))
